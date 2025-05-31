@@ -1,0 +1,82 @@
+# RAG 应用模板工程结构
+
+# 项目结构目录
+
+rag_app/
+├── app.py                    # ✅ 项目主入口（Streamlit Web UI）
+├── requirements.txt          # 依赖文件
+├── .env                      # 存放 OPENAI_API_KEY 等密钥（可选）
+│
+├── loaders/                  # 📂 文档加载器模块
+│   ├── __init__.py
+│   ├── pdf_loader.py         # 加载 PDF（PyMuPDFParser）
+│   └── csv_loader.py         # 加载 CSV（自定义）
+│
+├── parsers/                  # 📂 Blob 解析器模块
+│   ├── __init__.py
+│   └── csv_parser.py         # CSV 文件转 Document（继承 BaseBlobParser）
+│
+├── retrievers/               # 📂 自定义检索器模块
+│   ├── __init__.py
+│   └── keyword_retriever.py  # 关键词匹配检索器（非向量）
+│
+├── chains/                   # 📂 RAG Chain 构建逻辑
+│   ├── __init__.py
+│   └── rag_chain.py          # 构建 RetrievalQA + 记忆功能
+│
+├── memory/                   # 📂 对话历史模块
+│   ├── __init__.py
+│   ├── memory_router.py      # session_id -> message history
+│   └── redis_memory.py       # 持久化历史（Redis 可选）
+│
+└── utils/                    # 📂 工具函数模块
+    ├── __init__.py
+    └── file_utils.py         # 处理上传文件、转 Blob 等辅助逻辑
+
+
+# 示例：loaders/pdf_loader.py
+from langchain_community.document_loaders.blob_loaders import Blob
+from langchain_community.document_loaders.parsers.pdf import PyMuPDFParser
+
+def load_pdf(file_bytes: bytes, filename: str):
+    blob = Blob.from_data(file_bytes, path=filename)
+    parser = PyMuPDFParser()
+    return parser.parse(blob)  # 返回 List[Document]
+
+
+# 示例：chains/rag_chain.py
+from langchain.chains import RetrievalQA
+from langchain_openai import ChatOpenAI
+
+def build_rag_chain(retriever):
+    llm = ChatOpenAI(model="gpt-4o")
+    chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever, return_source_documents=True)
+    return chain
+
+
+# 示例：app.py（主入口）
+import streamlit as st 
+from loaders.pdf_loader import load_pdf
+from chains.rag_chain import build_rag_chain
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+
+st.title("📄 RAG 文档问答系统")
+uploaded_file = st.file_uploader("上传 PDF 文档", type=["pdf"])
+
+if uploaded_file:
+    docs = load_pdf(uploaded_file.read(), uploaded_file.name)
+    # 可接入分块、embedding、向量库
+    splitter = ...
+    embedding = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    vectorstore = FAISS.from_documents(docs, embedding)
+    retriever = vectorstore.as_retriever()
+
+    rag_chain = build_rag_chain(retriever)
+
+    query = st.text_input("请输入问题：")
+    if query:
+        response = rag_chain.invoke({"query": query})
+        st.write(response["result"])
+        for doc in response["source_documents"]:
+            st.code(doc.page_content[:200] + "...")
